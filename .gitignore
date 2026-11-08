@@ -1,0 +1,5 @@
+/dist/
+/akey
+/akey.exe
+*.test
+coverage.out

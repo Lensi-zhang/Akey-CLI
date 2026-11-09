@@ -7,16 +7,34 @@ const (
 	DefaultEnvPrefix = "API"
 )
 
+type CredentialType string
+
+const (
+	CredentialAPI        CredentialType = "api"
+	CredentialAgentPlan  CredentialType = "agent-plan"
+	CredentialCodingPlan CredentialType = "coding-plan"
+)
+
+func (credentialType CredentialType) Valid() bool {
+	switch credentialType {
+	case CredentialAPI, CredentialAgentPlan, CredentialCodingPlan:
+		return true
+	default:
+		return false
+	}
+}
+
 type Profile struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Provider  string    `json:"provider"`
-	BaseURL   string    `json:"base_url"`
-	Model     string    `json:"model"`
-	EnvPrefix string    `json:"env_prefix"`
-	Note      string    `json:"note"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID             string         `json:"id"`
+	Name           string         `json:"name"`
+	Provider       string         `json:"provider"`
+	CredentialType CredentialType `json:"credential_type,omitempty"`
+	BaseURL        string         `json:"base_url"`
+	Model          string         `json:"model"`
+	EnvPrefix      string         `json:"env_prefix"`
+	Note           string         `json:"note"`
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
 }
 
 type State struct {

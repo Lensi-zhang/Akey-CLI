@@ -132,6 +132,9 @@ func validateState(state *State) error {
 		if profile.EnvPrefix == "" {
 			profile.EnvPrefix = DefaultEnvPrefix
 		}
+		if profile.CredentialType == "" {
+			profile.CredentialType = CredentialAPI
+		}
 		if err := validateMetadata(*profile); err != nil {
 			return err
 		}
@@ -164,6 +167,9 @@ func validateMetadata(profile Profile) error {
 	}
 	if strings.TrimSpace(profile.Provider) == "" {
 		return apperr.NewConfig("invalid_provider", "Profile provider is required.", "Provide a non-empty provider.")
+	}
+	if !profile.CredentialType.Valid() {
+		return apperr.NewConfig("invalid_credential_type", "Profile credential type is invalid.", "Use api, agent-plan, or coding-plan.")
 	}
 	if err := validate.BaseURL(profile.BaseURL); err != nil {
 		return err
@@ -203,6 +209,9 @@ func (s *Store) Create(profile Profile) (Profile, error) {
 		}
 		if profile.EnvPrefix == "" {
 			profile.EnvPrefix = DefaultEnvPrefix
+		}
+		if profile.CredentialType == "" {
+			profile.CredentialType = CredentialAPI
 		}
 		now := time.Now().UTC().Truncate(time.Second)
 		profile.ID = id

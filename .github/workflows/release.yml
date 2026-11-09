@@ -1,0 +1,73 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+      - name: Run tests
+        run: go test ./...
+
+  release:
+    name: Build and publish release
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  smoke:
+    name: Smoke test (${{ matrix.os }})
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          - ubuntu-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Install and verify on Windows
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $installScript = Invoke-RestMethod -Uri "https://github.com/Lensi-zhang/Akey-CLI/releases/download/${{ github.ref_name }}/install.ps1" -UseBasicParsing
+          & ([ScriptBlock]::Create($installScript)) -Version "${{ github.ref_name }}"
+          & "$env:LOCALAPPDATA\Programs\Akey\bin\akey.exe" --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Install and verify on macOS and Linux
+        if: runner.os != 'Windows'
+        run: |
+          curl -fsSL "https://github.com/Lensi-zhang/Akey-CLI/releases/download/${{ github.ref_name }}/install.sh" | sh -s -- "${{ github.ref_name }}"
+          "$HOME/.local/bin/akey" --version

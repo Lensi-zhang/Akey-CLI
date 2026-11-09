@@ -1,8 +1,9 @@
 # Akey-CLI Go 版正式开发文档
 
 > 文档状态：正式规范  
-> 规范版本：1.0.0  
+> 规范版本：1.1.0
 > 制定日期：2026-11-08  
+> 最近修订：2026-11-09
 > 适用范围：Akey-CLI Golang 重构版全部开发、评审、测试与发布活动
 
 ## 0. 文档说明
@@ -35,7 +36,8 @@
 
 ### 1.2 核心特性
 
-- 多 Profile 环境隔离：厂商、模型、Base URL、环境变量前缀及备注。
+- 多 Profile 环境隔离：厂商、Key 类型、模型、Base URL、环境变量前缀及备注。
+- 服务商静态预设：普通 API Key、Agent Plan、Coding Plan 使用独立 Profile、Endpoint 和密钥环项。
 - 系统密钥环加密存储：零明文落地。
 - 子进程纯净环境注入：不污染当前终端，不在 Shell 历史中携带密钥。
 - 本地 AI Agent 一键配置：Trae 优先。
@@ -97,7 +99,8 @@ Akey-CLI/
 │   │   └── error.go             # 分类错误、安全消息与退出码映射
 │   ├── config/
 │   │   ├── store.go             # 元数据读取、校验、原子保存
-│   │   └── types.go             # Profile 与全局状态类型
+│   │   ├── types.go             # Profile、Key 类型与全局状态类型
+│   │   └── presets.go           # 服务商、Endpoint 与 Key 类型静态预设
 │   ├── keyring/
 │   │   ├── store.go             # 密钥环接口与后端实现
 │   │   └── redact.go            # 脱敏及禁止序列化保护
@@ -124,6 +127,11 @@ Akey-CLI/
 │   └── format/
 │       ├── table.go             # 纯表格字符串渲染
 │       └── json.go              # 纯 JSON 渲染
+├── scripts/
+│   ├── install.ps1              # Windows 免 Go 安装器
+│   └── install.sh               # macOS/Linux 免 Go 安装器
+├── .github/workflows/           # 三平台测试与 Release 自动化
+├── .goreleaser.yaml             # 压缩包、校验和及版本注入
 ├── docs/
 │   └── DEVELOPMENT.md           # 本文档
 ├── go.mod
@@ -157,6 +165,7 @@ Akey-CLI/
   "id": "8e2ac53fc10b4c748ef0459d0ec43d31",
   "name": "volc-prod",
   "provider": "volcengine",
+  "credential_type": "api",
   "base_url": "https://ark.cn-beijing.volces.com/api/v3",
   "model": "doubao-pro-32k",
   "env_prefix": "API",
@@ -173,6 +182,7 @@ Akey-CLI/
 | `id` | string | 是 | 创建时使用 `crypto/rand` 生成 16 字节随机数并编码为 32 位小写十六进制；重命名时不变 |
 | `name` | string | 是 | 全局唯一；匹配 `^[a-z0-9][a-z0-9_-]{0,31}$` |
 | `provider` | string | 是 | 厂商标识，仅作元数据，不保存任何凭证 |
+| `credential_type` | string | 否 | `api`、`agent-plan`、`coding-plan`；缺省及旧配置按 `api` 读取，创建后不可通过 `profile update` 修改 |
 | `base_url` | string | 是 | 必须为绝对 `http` 或 `https` URL，不得包含用户信息、查询密钥 |
 | `model` | string | 是 | 默认模型或 Endpoint 标识，由用户明确填写 |
 | `env_prefix` | string | 否 | 默认 `API`；匹配 `^[A-Z_][A-Z0-9_]*$` |
@@ -191,6 +201,7 @@ Akey-CLI/
       "id": "8e2ac53fc10b4c748ef0459d0ec43d31",
       "name": "volc-prod",
       "provider": "volcengine",
+      "credential_type": "api",
       "base_url": "https://ark.cn-beijing.volces.com/api/v3",
       "model": "doubao-pro-32k",
       "env_prefix": "API",
@@ -211,6 +222,8 @@ Akey-CLI/
 - 多进程写入时必须串行化或使用锁文件保护，读改写不得丢失其他进程更新。
 - JSON 中禁止出现 `api_key`、`apiKey`、`token`、`secret`、`password` 等凭证字段。
 
+Provider 预设必须保存在 `internal/config/presets.go`，仅包含稳定 ID、显示名、Provider、Base URL 和 Credential Type，不得联网查询或包含凭证。普通火山方舟使用 `/api/v3`，Agent Plan 使用 `/api/plan/v3`，Coding Plan 使用 `/api/coding/v3`。三类预设必须生成不同 Profile；即使用户录入相同 Key 字符串，也不得自动共享或切换密钥环项。其他服务商可复用 `api` 类型，Custom 由用户明确填写 Base URL。
+
 ### 4.2 密钥数据（密文、系统密钥环）
 
 存储后端自动适配：
@@ -223,7 +236,7 @@ Akey-CLI/
 
 - Service：`com.akey.cli`。
 - Account：`profile:<profile.id>`。
-- Value：用户 API Key，仅存在于密钥环和运行时受控内存中。
+- Value：用户 API Key 或 Plan Key，仅存在于密钥环和运行时受控内存中。
 
 必须使用不可变 `profile.id` 关联密钥，禁止使用可修改的 Profile 名称作为密钥环主键。删除 Profile 时同步删除对应密钥；仅重命名 Profile 时不得重建或复制密钥。
 
@@ -271,6 +284,8 @@ akey [全局 flags] <command> [subcommand] [flags] [args]
 - 机器可读数据写 stdout；提示、警告和错误写 stderr。
 - `--output json` 时 stdout 必须是单个合法 JSON 文档，不得混入样式字符或提示文本。
 - 非交互模式不得退化为明文密钥参数输入。
+- 无参数 `akey` 与 `akey helper` 必须进入同一个精简向导；`akey --help` 仍显示帮助，`akey --version` 仍显示版本。
+- 无参数配合 `--non-interactive` 时必须返回使用错误，不得等待终端输入。
 
 ### 5.1 `auth` 认证模块
 
@@ -291,7 +306,7 @@ akey auth status [--profile <name>]
 ### 5.2 `profile` 环境管理
 
 ```text
-akey profile create <name> [--provider <provider>] [--base-url <url>] [--model <model>] [--env-prefix <prefix>] [--note <note>]
+akey profile create <name> [--provider <provider>] [--credential-type <api|agent-plan|coding-plan>] [--base-url <url>] [--model <model>] [--env-prefix <prefix>] [--note <note>]
 akey profile list
 akey profile show [name]
 akey profile update <name> [--provider <provider>] [--base-url <url>] [--model <model>] [--env-prefix <prefix>] [--note <note>]
@@ -303,9 +318,9 @@ akey profile delete <name> [--yes]
 
 行为约束：
 
-- `create` 缺少必要元数据时进入交互向导；创建元数据后引导隐藏输入 Key。
-- `update` 仅修改显式提供的字段，不触发 Key 轮换；轮换使用 `auth login`。
-- `list` 显示当前标记、名称、Provider、Model、Base URL、Key 状态和备注。
+- `create` 缺少必要元数据时进入交互向导；创建元数据后引导隐藏输入 Key。`--credential-type` 缺省为 `api`，必须在读取 Key 前校验，创建后不可通过 `update` 修改。
+- `update` 仅修改显式提供的字段，不触发 Key 轮换；轮换使用 `auth login`，不得修改 Credential Type。
+- `list` 显示当前标记、名称、Provider、Credential Type、Model、Base URL、Key 状态和备注。
 - `show` 只显示元数据和 Key 配置状态，绝不显示 Key。
 - `use` 仅更新 `current_profile`。
 - `current` 无默认 Profile 时返回明确错误，不静默选择第一个 Profile。
@@ -389,21 +404,27 @@ akey agent mcp remove <agent> <server> [--yes]
 - `mcp remove` 仅移除目标 Agent 中对应配置，不删除其他 Agent 或系统中的服务。
 - 所有修改必须先解析并校验现有配置，保留未知字段，采用备份与原子替换，禁止直接覆盖整个文件。
 
-### 5.6 `helper` 总向导
+### 5.6 默认配置向导（`akey` / `helper`）
 
 ```text
+akey
 akey helper
 ```
 
-一站式 TUI 图形交互流程：
+默认交互流程：
 
-1. 创建 Profile。
-2. 隐藏输入并保存 Key。
-3. 切换默认环境。
-4. 一键配置 Agent。
-5. 挂载或移除 MCP。
+1. 编号选择 Provider 与 Key 类型；仅 Custom 追问并预先校验 Base URL。
+2. 输入 Model/Endpoint ID，再隐藏输入 API Key、Agent Plan Key 或 Coding Plan Key。
+3. 自动以预设 ID 生成 Profile 名称，重名时追加 `-2`、`-3` 等后缀；Env Prefix 固定为 `API`，备注为空。
+4. 沿用 Create → Set → Use；Key 保存失败必须回滚新建 Profile，且不得触碰 Agent。
+5. 复用 `agent detect` 的检测循环，以 `Installed || ConfigExists` 筛选候选 Agent。
+6. 0 个候选时正常结束；1 个候选时在写入前确认一次；多个候选时允许编号单选或跳过。
+7. Trae/Claude Code 根据 `ChangeSet.Changed` 报告 `configured` 或 `unchanged`；Codex no-op 必须报告 `not_required`，不得宣称写入成功。
+8. 用户跳过时报告 `skipped`，无候选时报告 `not_detected`，不得无条件输出 `configured=true`。
 
-Helper 必须复用与其他命令相同的内部服务，禁止复制业务逻辑。按 `Esc` 或取消操作时不得留下半完成配置；确需多阶段提交时必须清楚提示已完成与未完成的步骤。
+默认向导不得包含 MCP 问答；MCP 继续使用 `agent mcp` 高级命令。当前 Agent `Configure` 只初始化 `mcpServers`，不绑定 Provider 或 Model，界面必须称为“Agent 基础初始化”，不得宣称“已接入模型”。
+
+Helper 必须复用与其他命令相同的内部服务，禁止复制业务逻辑。Key 创建前取消不得留下配置；基础配置完成后的 Agent 阶段取消或失败时保留 Profile、Key 和默认环境，并明确报告已完成与未完成的步骤。交互提示写 stderr，JSON 结果写 stdout。
 
 ## 6. 核心模块详细规范
 
@@ -559,17 +580,17 @@ Remove-Item Env:CGO_ENABLED
 版本信息通过独立变量注入，不得硬编码在多个文件中：
 
 ```bash
-go build -trimpath -ldflags="-s -w -X main.version=1.0.0 -X main.commit=<commit> -X main.date=<utc-time>" -o akey ./cmd/akey
+go build -trimpath -ldflags="-s -w -X main.version=1.1.0 -X main.commit=<commit> -X main.buildDate=<utc-time>" -o akey ./cmd/akey
 ```
 
 ### 7.2 跨平台支持
 
-目标平台：
+目标平台固定为 9 个 Release 构建：
 
 - Windows：AMD64、ARM64。
 - macOS：AMD64、ARM64。
-- Linux：AMD64、ARM64、ARM。
-- OpenWrt：按目标设备架构发布 Linux MIPS/MIPSLE、ARM、ARM64 等构建。
+- Linux：AMD64、ARM64、ARMv7。
+- OpenWrt：Linux MIPS、MIPSLE（softfloat）。
 
 每个发布目标必须在真实系统或等价测试环境验证：密钥环、信号处理、路径解析和子进程退出码。交叉编译成功不等于该平台功能验收通过。
 
@@ -583,6 +604,23 @@ go test -race ./...
 ```
 
 `go test -race` 在目标平台不支持时，可在受支持的 CI 平台执行，但不得跳过普通测试。
+
+### 7.3 GoReleaser 与 Release 资产
+
+- 使用 `.goreleaser.yaml` 统一构建上述 9 个目标，注入 `main.version`、`main.commit` 和 UTC `main.buildDate`。
+- Windows 资产使用 ZIP，其余目标使用 tar.gz；所有压缩包必须列入统一 `checksums.txt`，校验算法为 SHA256。
+- `scripts/install.ps1` 与 `scripts/install.sh` 必须作为 Release 额外资产发布，不得要求用户安装 Go 或 GoReleaser。
+- `v*` 标签触发测试和 `.github/workflows/release.yml`，测试通过后由 GoReleaser 创建 Release；禁止覆盖既有版本或复用旧标签。
+- 发布前必须执行 `goreleaser check` 和 snapshot 构建，逐一核对目标数量、资产名称、压缩格式、SHA256 与版本注入。
+
+### 7.4 一键安装器与 CI
+
+- Windows 默认安装到 `%LOCALAPPDATA%\Programs\Akey\bin`，幂等更新当前用户 PATH；不得修改系统 PATH 或父进程环境。
+- macOS/Linux 桌面架构安装到 `$HOME/.local/bin`；目录不在 PATH 时只给出明确提示，不得批量改写 Shell 启动文件。OpenWrt/MIPS 使用手动压缩包安装。
+- 安装器默认解析 `latest`，同时支持显式版本；必须下载到临时目录、验证 SHA256 后解压并替换二进制。平台不支持、下载失败或校验失败时必须清理临时文件并停止，不得留下半安装状态。
+- 安装器不得接收、读取或输出 API Key/Plan Key，也不得将密钥放入 URL、命令参数、日志或环境变量。
+- `.github/workflows/test.yml` 必须在 Windows、Ubuntu 和 macOS 运行 `go test ./...`；Ubuntu 额外执行 `go vet ./...` 和支持的竞态检测。
+- Release 工作流必须对安装脚本执行三平台 smoke test，覆盖安装路径、PATH 行为及 `akey --version`；脚本语法检查不能替代真实安装验证。
 
 ## 8. 日志与输出规范
 
@@ -637,6 +675,12 @@ go test -race ./...
 12. 非交互模式在缺少信息时安全失败，不挂起等待输入。
 13. 错误、Verbose 和第三方库错误路径均不泄露 Key。
 14. 并发写入不会导致 Profile 丢失或配置损坏。
+15. Provider 预设 ID 唯一且顺序稳定；火山普通 API、Agent Plan、Coding Plan 的 Endpoint、Credential Type、Profile 和密钥环项相互隔离，旧配置缺省按 `api` 读取，`profile update` 不得修改类型。
+16. 无参数 `akey` 与 `akey helper` 进入同一精简向导；`--help`、`--version` 行为不变，无参数 `--non-interactive` 安全失败。
+17. Custom Base URL 在读取 Key 前校验；自动命名冲突按序号处理；Create → Set → Use 顺序正确，Key 保存失败时回滚新建 Profile。
+18. Agent 0/1/N 检测、单选、跳过和确认语义正确；拒绝配置时零写入，`configured`、`unchanged`、`skipped`、`not_required` 和部分完成状态不得虚报。
+19. 安装器通过脚本语法及真实安装测试；不支持的平台、下载失败和 SHA256 校验失败均安全停止并清理临时文件，PATH 更新幂等且不污染父 Shell。
+20. GoReleaser snapshot 产出 9 个目标、对应压缩包和统一 SHA256；三平台安装 smoke test 验证安装路径、PATH 行为与 `akey --version`。
 
 测试必须使用明显的伪密钥并在断言中检查其不出现；禁止在测试、快照、日志和 CI 环境中使用真实凭证。
 

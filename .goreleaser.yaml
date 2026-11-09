@@ -1,0 +1,73 @@
+version: 2
+
+project_name: akey
+
+builds:
+  - id: akey
+    main: ./cmd/akey
+    binary: akey
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - >-
+        -s -w
+        -X main.version={{.Version}}
+        -X main.commit={{.Commit}}
+        -X main.buildDate={{.Date}}
+    goos:
+      - windows
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+      - arm
+      - mips
+      - mipsle
+    goarm:
+      - "7"
+    gomips:
+      - softfloat
+    ignore:
+      - goos: windows
+        goarch: arm
+      - goos: windows
+        goarch: mips
+      - goos: windows
+        goarch: mipsle
+      - goos: darwin
+        goarch: arm
+      - goos: darwin
+        goarch: mips
+      - goos: darwin
+        goarch: mipsle
+
+archives:
+  - id: akey
+    ids:
+      - akey
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: >-
+      akey_{{ title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "arm" }}armv{{ .Arm }}
+      {{- else }}{{ .Arch }}
+      {{- end }}
+    files:
+      - src: "none*"
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+release:
+  extra_files:
+    - glob: ./scripts/install.ps1
+    - glob: ./scripts/install.sh

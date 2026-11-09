@@ -61,20 +61,30 @@ func newAgentDetectCommand(application *application) *cobra.Command {
 		Short: "检测本机 Agent 安装与配置路径",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
-			adapters := application.agents.List()
-			items := make([]agent.InstallInfo, 0, len(adapters))
-			rows := make([][]string, 0, len(adapters))
-			for _, adapter := range adapters {
-				info, err := adapter.Detect()
-				if err != nil {
-					return normalizeAgentError(err, "agent_detect_failed", fmt.Sprintf("检测 Agent %s 失败", adapter.Name()), "请检查 Agent 安装和配置路径")
-				}
-				items = append(items, info)
+			items, err := detectAgents(application)
+			if err != nil {
+				return err
+			}
+			rows := make([][]string, 0, len(items))
+			for _, info := range items {
 				rows = append(rows, []string{info.Name, yesNo(info.Installed), info.ExecutablePath, info.ConfigPath, yesNo(info.ConfigExists)})
 			}
 			return application.emit(items, format.Table([]string{"AGENT", "INSTALLED", "EXECUTABLE", "CONFIG", "CONFIG_EXISTS"}, rows))
 		},
 	}
+}
+
+func detectAgents(application *application) ([]agent.InstallInfo, error) {
+	adapters := application.agents.List()
+	items := make([]agent.InstallInfo, 0, len(adapters))
+	for _, adapter := range adapters {
+		info, err := adapter.Detect()
+		if err != nil {
+			return nil, normalizeAgentError(err, "agent_detect_failed", fmt.Sprintf("检测 Agent %s 失败", adapter.Name()), "请检查 Agent 安装和配置路径")
+		}
+		items = append(items, info)
+	}
+	return items, nil
 }
 
 func newAgentStatusCommand(application *application) *cobra.Command {

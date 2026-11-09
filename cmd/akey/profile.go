@@ -26,17 +26,18 @@ type keyView struct {
 }
 
 type profileView struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Provider  string    `json:"provider"`
-	BaseURL   string    `json:"base_url"`
-	Model     string    `json:"model"`
-	EnvPrefix string    `json:"env_prefix"`
-	Note      string    `json:"note"`
-	Current   bool      `json:"current"`
-	Key       keyView   `json:"key"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID             string                `json:"id"`
+	Name           string                `json:"name"`
+	Provider       string                `json:"provider"`
+	CredentialType config.CredentialType `json:"credential_type"`
+	BaseURL        string                `json:"base_url"`
+	Model          string                `json:"model"`
+	EnvPrefix      string                `json:"env_prefix"`
+	Note           string                `json:"note"`
+	Current        bool                  `json:"current"`
+	Key            keyView               `json:"key"`
+	CreatedAt      time.Time             `json:"created_at"`
+	UpdatedAt      time.Time             `json:"updated_at"`
 }
 
 type profileDeleteView struct {
@@ -67,7 +68,7 @@ func newProfileCommand(application *application) *cobra.Command {
 }
 
 func newProfileCreateCommand(application *application) *cobra.Command {
-	var provider, baseURL, model, envPrefix, note string
+	var provider, credentialType, baseURL, model, envPrefix, note string
 	command := &cobra.Command{
 		Use:   "create <name>",
 		Short: "创建 Profile 并引导隐藏录入 Key",
@@ -75,6 +76,13 @@ func newProfileCreateCommand(application *application) *cobra.Command {
 		RunE: func(command *cobra.Command, args []string) error {
 			if err := validate.ProfileName(args[0]); err != nil {
 				return err
+			}
+			selectedCredentialType := config.CredentialType(credentialType)
+			if selectedCredentialType == "" {
+				selectedCredentialType = config.CredentialAPI
+			}
+			if !selectedCredentialType.Valid() {
+				return apperr.NewUsage("invalid_credential_type", "Key 类型无效", "请使用 api、agent-plan 或 coding-plan")
 			}
 			var err error
 			if provider == "" {
@@ -106,12 +114,13 @@ func newProfileCreateCommand(application *application) *cobra.Command {
 			}
 
 			created, err := application.config.Create(config.Profile{
-				Name:      args[0],
-				Provider:  provider,
-				BaseURL:   baseURL,
-				Model:     model,
-				EnvPrefix: envPrefix,
-				Note:      note,
+				Name:           args[0],
+				Provider:       provider,
+				CredentialType: selectedCredentialType,
+				BaseURL:        baseURL,
+				Model:          model,
+				EnvPrefix:      envPrefix,
+				Note:           note,
 			})
 			if err != nil {
 				return err
@@ -132,6 +141,7 @@ func newProfileCreateCommand(application *application) *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&provider, "provider", "", "API 服务提供方")
+	command.Flags().StringVar(&credentialType, "credential-type", string(config.CredentialAPI), "Key 类型：api、agent-plan 或 coding-plan；创建后不可修改")
 	command.Flags().StringVar(&baseURL, "base-url", "", "API Base URL")
 	command.Flags().StringVar(&model, "model", "", "模型或 Endpoint ID")
 	command.Flags().StringVar(&envPrefix, "env-prefix", config.DefaultEnvPrefix, "环境变量前缀")
@@ -158,12 +168,12 @@ func newProfileListCommand(application *application) *cobra.Command {
 				if view.Current {
 					current = "*"
 				}
-				rows = append(rows, []string{current, view.Name, view.Provider, view.Model, view.BaseURL, view.Key.Status, view.Note})
+				rows = append(rows, []string{current, view.Name, view.Provider, string(view.CredentialType), view.Model, view.BaseURL, view.Key.Status, view.Note})
 			}
 			if len(views) == 0 {
 				application.printer.info("尚未创建 Profile")
 			}
-			return application.emit(views, format.Table([]string{"CURRENT", "NAME", "PROVIDER", "MODEL", "BASE_URL", "KEY", "NOTE"}, rows))
+			return application.emit(views, format.Table([]string{"CURRENT", "NAME", "PROVIDER", "TYPE", "MODEL", "BASE_URL", "KEY", "NOTE"}, rows))
 		},
 	}
 }
@@ -380,6 +390,7 @@ func profileTable(view profileView) string {
 		{"ID", view.ID},
 		{"NAME", view.Name},
 		{"PROVIDER", view.Provider},
+		{"CREDENTIAL_TYPE", string(view.CredentialType)},
 		{"BASE_URL", view.BaseURL},
 		{"MODEL", view.Model},
 		{"ENV_PREFIX", view.EnvPrefix},
@@ -402,17 +413,18 @@ func (application *application) makeProfileView(profile config.Profile) (profile
 
 func (application *application) profileView(profile config.Profile, currentName string) profileView {
 	return profileView{
-		ID:        profile.ID,
-		Name:      profile.Name,
-		Provider:  profile.Provider,
-		BaseURL:   profile.BaseURL,
-		Model:     profile.Model,
-		EnvPrefix: profile.EnvPrefix,
-		Note:      profile.Note,
-		Current:   profile.Name == currentName,
-		Key:       application.keyView(profile),
-		CreatedAt: profile.CreatedAt,
-		UpdatedAt: profile.UpdatedAt,
+		ID:             profile.ID,
+		Name:           profile.Name,
+		Provider:       profile.Provider,
+		CredentialType: profile.CredentialType,
+		BaseURL:        profile.BaseURL,
+		Model:          profile.Model,
+		EnvPrefix:      profile.EnvPrefix,
+		Note:           profile.Note,
+		Current:        profile.Name == currentName,
+		Key:            application.keyView(profile),
+		CreatedAt:      profile.CreatedAt,
+		UpdatedAt:      profile.UpdatedAt,
 	}
 }
 

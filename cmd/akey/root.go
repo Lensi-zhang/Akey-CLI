@@ -69,7 +69,7 @@ func newRootCommand(application *application) *cobra.Command {
 					"built":   buildDate,
 				}, table)
 			}
-			return command.Help()
+			return runDefaultHelper(application)
 		},
 	}
 	root.SetIn(application.stdin)

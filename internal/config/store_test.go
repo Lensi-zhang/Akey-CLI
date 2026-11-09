@@ -120,7 +120,7 @@ func TestCreateGetListAndJSONSchema(t *testing.T) {
 	if err := json.Unmarshal(document.Profiles[0], &fields); err != nil {
 		t.Fatalf("profile is not a JSON object: %v", err)
 	}
-	wantFields := []string{"base_url", "created_at", "env_prefix", "id", "model", "name", "note", "provider", "updated_at"}
+	wantFields := []string{"base_url", "created_at", "credential_type", "env_prefix", "id", "model", "name", "note", "provider", "updated_at"}
 	gotFields := make([]string, 0, len(fields))
 	for field := range fields {
 		gotFields = append(gotFields, field)

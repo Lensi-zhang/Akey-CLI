@@ -3,89 +3,93 @@ package main
 import (
 	"errors"
 	"fmt"
-	"os/exec"
+	"strconv"
 	"strings"
 
+	"github.com/Lensi-zhang/Akey-CLI/internal/agent"
 	"github.com/Lensi-zhang/Akey-CLI/internal/apperr"
 	"github.com/Lensi-zhang/Akey-CLI/internal/config"
 	"github.com/Lensi-zhang/Akey-CLI/internal/format"
-	"github.com/Lensi-zhang/Akey-CLI/internal/mcp"
 	"github.com/Lensi-zhang/Akey-CLI/internal/validate"
 
 	"github.com/spf13/cobra"
 )
 
 type helperView struct {
-	Profile    string `json:"profile"`
-	Current    bool   `json:"current"`
-	Agent      string `json:"agent,omitempty"`
-	Configured bool   `json:"configured"`
-	MCPAction  string `json:"mcp_action,omitempty"`
-	MCPServer  string `json:"mcp_server,omitempty"`
+	Profile        string                `json:"profile"`
+	CredentialType config.CredentialType `json:"credential_type"`
+	Current        bool                  `json:"current"`
+	Agent          string                `json:"agent,omitempty"`
+	Configured     bool                  `json:"configured"`
+	AgentStatus    string                `json:"agent_status"`
 }
 
 func newHelperCommand(application *application) *cobra.Command {
 	return &cobra.Command{
 		Use:   "helper",
-		Short: "一站式配置 Profile、Key、Agent 与 MCP",
+		Short: "交互式创建 Profile、保存 Key 并初始化 Agent",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
-			if err := application.requireInteractive(); err != nil {
-				return err
-			}
-			return runHelper(application)
+			return runDefaultHelper(application)
 		},
 	}
 }
 
+func runDefaultHelper(application *application) error {
+	if err := application.requireInteractive(); err != nil {
+		return err
+	}
+	return runHelper(application)
+}
+
 func runHelper(application *application) error {
-	name, err := promptLine(application.stdin, application.stderr, "Profile 名称: ")
+	preset, err := promptProviderPreset(application)
 	if err != nil {
 		return err
 	}
-	if err := validate.ProfileName(name); err != nil {
-		return err
+	baseURL := preset.BaseURL
+	if preset.ID == "custom" {
+		baseURL, err = promptLine(application.stdin, application.stderr, "Base URL: ")
+		if err != nil {
+			return err
+		}
+		if err := validate.BaseURL(baseURL); err != nil {
+			return err
+		}
 	}
-	provider, err := promptLine(application.stdin, application.stderr, "Provider: ")
+	model, err := promptLine(application.stdin, application.stderr, "Model 或 Endpoint ID（从服务商控制台复制）: ")
 	if err != nil {
 		return err
 	}
-	baseURL, err := promptLine(application.stdin, application.stderr, "Base URL: ")
+	name, err := nextHelperProfileName(application, preset.ID)
 	if err != nil {
 		return err
 	}
-	model, err := promptLine(application.stdin, application.stderr, "Model 或 Endpoint ID: ")
-	if err != nil {
-		return err
+
+	secretLabel := "API Key: "
+	switch preset.CredentialType {
+	case config.CredentialAgentPlan:
+		secretLabel = "Agent Plan Key: "
+	case config.CredentialCodingPlan:
+		secretLabel = "Coding Plan Key: "
 	}
-	envPrefix, err := readLine(application.stdin, application.stderr, "环境变量前缀 [API]: ")
-	if err != nil {
-		return err
-	}
-	if envPrefix == "" {
-		envPrefix = config.DefaultEnvPrefix
-	}
-	note, err := readLine(application.stdin, application.stderr, "备注（可选）: ")
-	if err != nil {
-		return err
-	}
-	secret, err := promptSecret(application.stdin, application.stderr, "API Key: ")
+	secret, err := promptSecret(application.stdin, application.stderr, secretLabel)
 	if err != nil {
 		if errors.Is(err, errInputCanceled) {
 			return apperr.NewCanceled("helper_canceled", "向导已取消", "未创建 Profile、Key 或 Agent 配置")
 		}
 		if errors.Is(err, errEmptySecret) {
-			return apperr.NewUsage("empty_key", "API Key 不能为空", "未创建任何配置，请重新运行 helper")
+			return apperr.NewUsage("empty_key", "Key 不能为空", "未创建任何配置，请重新运行 akey")
 		}
 		return apperr.NewRuntime("key_input_failed", "无法读取隐藏密钥输入", "未创建任何配置，请检查终端后重试", err)
 	}
 	created, err := application.config.Create(config.Profile{
-		Name:      name,
-		Provider:  provider,
-		BaseURL:   baseURL,
-		Model:     model,
-		EnvPrefix: envPrefix,
-		Note:      note,
+		Name:           name,
+		Provider:       preset.Provider,
+		CredentialType: preset.CredentialType,
+		BaseURL:        baseURL,
+		Model:          model,
+		EnvPrefix:      config.DefaultEnvPrefix,
 	})
 	if err != nil {
 		return err
@@ -103,116 +107,147 @@ func runHelper(application *application) error {
 	if err := application.config.Use(created.Name); err != nil {
 		return apperr.NewConfig("helper_use_failed", "Profile 与 Key 已创建，但默认环境切换失败", fmt.Sprintf("请执行 akey profile use %s", created.Name), err)
 	}
-	application.printer.success(fmt.Sprintf("Profile %s 与 Key 已创建，并设为默认环境", created.Name))
+	application.printer.success(fmt.Sprintf("Profile %s（%s）与 Key 已创建，并设为默认环境", created.Name, created.CredentialType))
 
-	view := helperView{Profile: created.Name, Current: true}
-	configureAgent, err := confirm(application.stdin, application.stderr, "是否现在配置 Agent？")
-	if err != nil {
+	view := helperView{Profile: created.Name, CredentialType: created.CredentialType, Current: true}
+	if err := configureDetectedAgent(application, created, &view); err != nil {
 		return err
 	}
-	if configureAgent {
-		agentName, err := promptLine(application.stdin, application.stderr, "Agent (trae/claude-code/codex): ")
-		if err != nil {
-			return err
-		}
-		adapter, err := getAdapter(application, agentName)
-		if err != nil {
-			return helperPartialError("Agent 配置失败", err)
-		}
-		if _, err := adapter.Configure(created); err != nil {
-			return helperPartialError("Agent 配置失败", err)
-		}
-		view.Agent = agentName
-		view.Configured = true
-		application.printer.success(fmt.Sprintf("Agent %s 配置完成", agentName))
-	}
-
-	manageMCP, err := confirm(application.stdin, application.stderr, "是否挂载或移除 MCP？")
-	if err != nil {
-		return err
-	}
-	if manageMCP {
-		if err := runHelperMCP(application, created, &view); err != nil {
-			return err
-		}
-	}
-	return application.emit(view, format.Table([]string{"PROFILE", "CURRENT", "AGENT", "CONFIGURED", "MCP_ACTION", "MCP_SERVER"}, [][]string{{
+	return application.emit(view, format.Table([]string{"PROFILE", "TYPE", "CURRENT", "AGENT", "AGENT_STATUS"}, [][]string{{
 		view.Profile,
+		string(view.CredentialType),
 		yesNo(view.Current),
 		view.Agent,
-		yesNo(view.Configured),
-		view.MCPAction,
-		view.MCPServer,
+		view.AgentStatus,
 	}}))
 }
 
-func runHelperMCP(application *application, profile config.Profile, view *helperView) error {
-	action, err := promptLine(application.stdin, application.stderr, "MCP 操作 (add/remove): ")
+func promptProviderPreset(application *application) (config.ProviderPreset, error) {
+	presets := config.ProviderPresets()
+	_, _ = fmt.Fprintln(application.stderr, "请选择服务商与 Key 类型：")
+	for index, preset := range presets {
+		_, _ = fmt.Fprintf(application.stderr, "  %d) %s\n", index+1, preset.Name)
+	}
+	choice, err := readLine(application.stdin, application.stderr, "请输入序号 [1]: ")
 	if err != nil {
-		return err
+		return config.ProviderPreset{}, err
 	}
-	if action != "add" && action != "remove" {
-		return apperr.NewUsage("invalid_mcp_action", "MCP 操作仅支持 add 或 remove", "Profile 与 Key 已创建，可稍后通过 agent mcp 管理")
+	if choice == "" {
+		choice = "1"
 	}
-	agentName, err := readLine(application.stdin, application.stderr, fmt.Sprintf("Agent [%s]: ", view.Agent))
+	index, err := strconv.Atoi(choice)
+	if err != nil || index < 1 || index > len(presets) {
+		return config.ProviderPreset{}, apperr.NewUsage("invalid_provider_selection", "服务商序号无效", fmt.Sprintf("请输入 1 到 %d", len(presets)))
+	}
+	return presets[index-1], nil
+}
+
+func nextHelperProfileName(application *application, presetID string) (string, error) {
+	profiles, err := application.config.List()
 	if err != nil {
-		return err
+		return "", err
 	}
-	if agentName == "" {
-		agentName = view.Agent
+	used := make(map[string]bool, len(profiles))
+	for _, profile := range profiles {
+		used[profile.Name] = true
 	}
-	if agentName == "" {
-		agentName, err = promptLine(application.stdin, application.stderr, "Agent (trae/claude-code/codex): ")
-		if err != nil {
-			return err
+	if !used[presetID] {
+		return presetID, nil
+	}
+	for suffix := 2; ; suffix++ {
+		candidate := fmt.Sprintf("%s-%d", presetID, suffix)
+		if !used[candidate] {
+			return candidate, nil
 		}
 	}
-	serverName, err := promptLine(application.stdin, application.stderr, "MCP Server 名称: ")
+}
+
+func configureDetectedAgent(application *application, profile config.Profile, view *helperView) error {
+	detected, err := detectAgents(application)
 	if err != nil {
-		return err
+		return helperPartialError("Agent 检测失败", err)
 	}
-	adapter, err := getAdapter(application, agentName)
-	if err != nil {
-		return helperPartialError("MCP 操作失败", err)
+	candidates := make([]agent.InstallInfo, 0, len(detected))
+	for _, info := range detected {
+		if info.Installed || info.ConfigExists {
+			candidates = append(candidates, info)
+		}
+	}
+	if len(candidates) == 0 {
+		view.AgentStatus = "not_detected"
+		application.printer.info("未检测到支持的 Agent；可稍后执行 akey agent detect，或使用 akey run -- <command>")
+		return nil
 	}
 
-	if action == "add" {
-		executable, err := readLine(application.stdin, application.stderr, "自定义启动命令（留空使用内置模板）: ")
-		if err != nil {
-			return err
-		}
-		var server mcp.Server
-		if executable == "" {
-			server, err = mcp.Builtin(serverName, profile.Name)
-		} else {
-			server, err = mcp.Custom(serverName, executable, nil, profile.Name)
-		}
-		if err != nil {
-			return helperPartialError("MCP 挂载参数无效", err)
-		}
-		if _, err := exec.LookPath(server.Command); err != nil {
-			return helperPartialError("MCP 启动命令不可用", apperr.NewNotFound("mcp_command_not_found", "找不到 MCP 启动命令", "请先安装服务或提供有效命令"))
-		}
-		if _, err := adapter.AddMCP(profile, server); err != nil {
-			return helperPartialError("MCP 挂载失败", err)
-		}
-	} else {
-		confirmed, err := confirm(application.stdin, application.stderr, fmt.Sprintf("确认从 %s 移除 %s？", agentName, serverName))
-		if err != nil {
-			return err
-		}
-		if !confirmed {
-			application.printer.info("已跳过 MCP 移除；此前 Profile、Key 和 Agent 配置保持不变")
-			return nil
-		}
-		if _, err := adapter.RemoveMCP(serverName); err != nil {
-			return helperPartialError("MCP 移除失败", err)
-		}
+	selected, proceed, err := selectDetectedAgent(application, candidates)
+	if err != nil {
+		return helperPartialError("Agent 选择无效", err)
 	}
-	view.MCPAction = action
-	view.MCPServer = serverName
-	application.printer.success(fmt.Sprintf("MCP %s 操作完成: %s", action, serverName))
+	if !proceed {
+		view.AgentStatus = "skipped"
+		application.printer.info("已跳过 Agent 基础初始化；Profile 与 Key 保持不变")
+		return nil
+	}
+	view.Agent = selected.Name
+	if selected.Name == "codex" {
+		view.AgentStatus = "not_required"
+		application.printer.info("Codex 无需独立全局配置，未修改任何文件；MCP 可通过 akey agent mcp 管理")
+		return nil
+	}
+
+	application.printer.info(fmt.Sprintf("将为 %s 初始化基础配置：%s", selected.Name, selected.ConfigPath))
+	application.printer.info("该操作只初始化 mcpServers，不会绑定模型或写入 API Key")
+	confirmed, err := confirm(application.stdin, application.stderr, "确认修改上述 Agent 配置？")
+	if err != nil {
+		return err
+	}
+	if !confirmed {
+		view.AgentStatus = "skipped"
+		application.printer.info("已跳过 Agent 基础初始化；Profile 与 Key 保持不变")
+		return nil
+	}
+	adapter, err := getAdapter(application, selected.Name)
+	if err != nil {
+		return helperPartialError("Agent 基础初始化失败", err)
+	}
+	changes, err := adapter.Configure(profile)
+	if err != nil {
+		return helperPartialError("Agent 基础初始化失败", err)
+	}
+	view.Configured = true
+	if changes.Changed {
+		view.AgentStatus = "configured"
+		application.printer.success(fmt.Sprintf("Agent %s 基础配置已初始化", selected.Name))
+	} else {
+		view.AgentStatus = "unchanged"
+		application.printer.info(fmt.Sprintf("Agent %s 现有配置无需变更", selected.Name))
+	}
 	return nil
+}
+
+func selectDetectedAgent(application *application, candidates []agent.InstallInfo) (agent.InstallInfo, bool, error) {
+	if len(candidates) == 1 {
+		return candidates[0], true, nil
+	}
+	_, _ = fmt.Fprintln(application.stderr, "检测到多个 Agent：")
+	for index, info := range candidates {
+		_, _ = fmt.Fprintf(application.stderr, "  %d) %s\n", index+1, info.Name)
+	}
+	choice, err := readLine(application.stdin, application.stderr, "请选择要初始化的 Agent [1]（0 跳过）: ")
+	if err != nil {
+		return agent.InstallInfo{}, false, err
+	}
+	if choice == "" {
+		choice = "1"
+	}
+	index, err := strconv.Atoi(choice)
+	if err != nil || index < 0 || index > len(candidates) {
+		return agent.InstallInfo{}, false, apperr.NewUsage("invalid_agent_selection", "Agent 序号无效", fmt.Sprintf("请输入 0 到 %d", len(candidates)))
+	}
+	if index == 0 {
+		return agent.InstallInfo{}, false, nil
+	}
+	return candidates[index-1], true, nil
 }
 
 func helperPartialError(step string, cause error) error {

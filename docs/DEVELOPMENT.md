@@ -619,8 +619,11 @@ go test -race ./...
 - macOS/Linux 桌面架构安装到 `$HOME/.local/bin`；目录不在 PATH 时只给出明确提示，不得批量改写 Shell 启动文件。OpenWrt/MIPS 使用手动压缩包安装。
 - 安装器默认解析 `latest`，同时支持显式版本；必须下载到临时目录、验证 SHA256 后解压并替换二进制。平台不支持、下载失败或校验失败时必须清理临时文件并停止，不得留下半安装状态。
 - 安装器不得接收、读取或输出 API Key/Plan Key，也不得将密钥放入 URL、命令参数、日志或环境变量。
+- Windows 提供 `-Uninstall`，macOS/Linux 提供 `--uninstall`：默认只删除二进制及安装器添加的 PATH 条目，保留 Profile 数据与密钥环凭证，并明确提示如何彻底清理。
+- `-Purge` / `--purge` 必须与卸载同时使用，先通过 `akey profile delete` 清理密钥环，再删除 `~/.akey`；任一 Profile 清理失败时给出警告，不得静默跳过，也不得因此让卸载整体返回失败。
+- 卸载必须幂等：未安装时正常退出并说明现状；清理完成后进程退出码必须为 0。
 - `.github/workflows/test.yml` 必须在 Windows、Ubuntu 和 macOS 运行 `go test ./...`；Ubuntu 额外执行 `go vet ./...` 和支持的竞态检测。
-- Release 工作流必须对安装脚本执行三平台 smoke test，覆盖安装路径、PATH 行为及 `akey --version`；脚本语法检查不能替代真实安装验证。
+- Release 工作流必须对安装脚本执行三平台 smoke test，覆盖安装路径、PATH 行为、`akey --version` 以及卸载后二进制确实消失；脚本语法检查不能替代真实安装验证。
 
 ## 8. 日志与输出规范
 

@@ -36,6 +36,35 @@ curl -fsSL https://github.com/Lensi-zhang/Akey-CLI/releases/latest/download/inst
 
 也可以从 [GitHub Releases](https://github.com/Lensi-zhang/Akey-CLI/releases/latest) 手动下载对应平台的压缩包和 SHA256 校验文件。OpenWrt/MIPS 请使用手动安装。
 
+## 卸载
+
+### Windows
+
+```powershell
+irm https://github.com/Lensi-zhang/Akey-CLI/releases/latest/download/install.ps1 -OutFile install.ps1
+.\install.ps1 -Uninstall
+```
+
+只删除可执行文件和 PATH 条目，保留 Profile 数据与密钥环中的 Key。确认不再需要这些数据后，可一并清理：
+
+```powershell
+.\install.ps1 -Uninstall -Purge
+```
+
+### macOS / Linux
+
+```bash
+curl -fsSL https://github.com/Lensi-zhang/Akey-CLI/releases/latest/download/install.sh | sh -s -- --uninstall
+```
+
+`--purge` 会同时删除 `~/.akey` 中的数据，并调用 `akey profile delete` 清理密钥环条目：
+
+```bash
+curl -fsSL https://github.com/Lensi-zhang/Akey-CLI/releases/latest/download/install.sh | sh -s -- --uninstall --purge
+```
+
+OpenWrt/MIPS 手动安装的用户，直接删除 `akey` 二进制即可；如需彻底清理，先执行 `akey profile delete <name> --yes`，再删除 `~/.akey`。
+
 ## 快速开始
 
 直接运行：

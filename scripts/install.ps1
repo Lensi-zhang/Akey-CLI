@@ -1,13 +1,103 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [string]$Version = "latest"
+    [string]$Version = "latest",
+    [switch]$Uninstall,
+    [switch]$Purge
 )
 
 $ErrorActionPreference = "Stop"
 
 if ($env:OS -ne "Windows_NT") {
     throw "This installer supports Windows only."
+}
+
+if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+    throw "LOCALAPPDATA is not set."
+}
+
+$installDirectory = Join-Path $env:LOCALAPPDATA "Programs\Akey\bin"
+$destinationPath = Join-Path $installDirectory "akey.exe"
+
+function Remove-AkeyData {
+    $binaryPath = $null
+    if (Test-Path -LiteralPath $destinationPath -PathType Leaf) {
+        $binaryPath = $destinationPath
+    } else {
+        $installed = Get-Command akey -ErrorAction SilentlyContinue
+        if ($null -ne $installed) {
+            $binaryPath = $installed.Source
+        }
+    }
+
+    if ($binaryPath) {
+        $profileNames = @()
+        try {
+            $raw = (& $binaryPath profile list --output json 2>$null) -join "`n"
+            if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($raw)) {
+                $profileNames = @($raw | ConvertFrom-Json | ForEach-Object { $_.name })
+            }
+        } catch {
+            $profileNames = @()
+        }
+        foreach ($profileName in $profileNames) {
+            if ($profileName -notmatch '^[a-z0-9][a-z0-9_-]{0,31}$') {
+                continue
+            }
+            try {
+                & $binaryPath profile delete $profileName --yes 2>$null | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Warning "Could not delete profile $profileName; remove it manually before purging."
+                }
+            } catch {
+                Write-Warning "Could not delete profile $profileName; remove it manually before purging."
+            }
+        }
+    } else {
+        Write-Warning "akey binary not found; API keys in the OS credential store were not removed."
+    }
+
+    $dataDirectory = Join-Path $env:USERPROFILE ".akey"
+    if (Test-Path -LiteralPath $dataDirectory) {
+        Remove-Item -LiteralPath $dataDirectory -Recurse -Force
+        Write-Host "Removed profile data at $dataDirectory"
+    }
+}
+
+if ($Uninstall) {
+    if ($Purge) {
+        Remove-AkeyData
+    }
+
+    if (Test-Path -LiteralPath $destinationPath -PathType Leaf) {
+        Remove-Item -LiteralPath $destinationPath -Force
+        Write-Host "Removed $destinationPath"
+    } else {
+        Write-Host "akey is not installed at $destinationPath"
+    }
+
+    if ((Test-Path -LiteralPath $installDirectory) -and -not (Get-ChildItem -LiteralPath $installDirectory -Force)) {
+        Remove-Item -LiteralPath $installDirectory -Force
+    }
+
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    if ($null -ne $userPath) {
+        $normalizedInstallDirectory = $installDirectory.TrimEnd('\')
+        $keptEntries = @($userPath -split ';' | Where-Object {
+            $_ -and ($_.Trim().TrimEnd('\') -ine $normalizedInstallDirectory)
+        })
+        $updatedPath = $keptEntries -join ';'
+        if ($updatedPath -ne $userPath) {
+            [Environment]::SetEnvironmentVariable("Path", $updatedPath, "User")
+            Write-Host "Removed $installDirectory from the current user PATH."
+        }
+    }
+
+    if (-not $Purge) {
+        Write-Host "Profile data and API keys were kept. Re-run with -Purge to remove them."
+    }
+
+    exit 0
 }
 
 if ($Version -ne "latest") {
@@ -38,14 +128,9 @@ if ($Version -eq "latest") {
     $downloadBase = "$releaseBase/download/$Version"
 }
 
-if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
-    throw "LOCALAPPDATA is not set."
-}
-
 $tempDirectory = Join-Path ([System.IO.Path]::GetTempPath()) ("akey-install-" + [Guid]::NewGuid().ToString("N"))
 $stagePath = $null
 $backupPath = $null
-$destinationPath = $null
 New-Item -ItemType Directory -Path $tempDirectory | Out-Null
 
 try {
@@ -78,9 +163,7 @@ try {
         throw "The archive does not contain akey.exe."
     }
 
-    $installDirectory = Join-Path $env:LOCALAPPDATA "Programs\Akey\bin"
     New-Item -ItemType Directory -Path $installDirectory -Force | Out-Null
-    $destinationPath = Join-Path $installDirectory "akey.exe"
     $stagePath = Join-Path $installDirectory (".akey-" + [Guid]::NewGuid().ToString("N") + ".exe")
     Copy-Item -LiteralPath $extractedBinary -Destination $stagePath
 

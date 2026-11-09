@@ -62,12 +62,21 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: |
-          $installScript = Invoke-RestMethod -Uri "https://github.com/Lensi-zhang/Akey-CLI/releases/download/${{ github.ref_name }}/install.ps1" -UseBasicParsing
-          & ([ScriptBlock]::Create($installScript)) -Version "${{ github.ref_name }}"
+          $scriptPath = Join-Path $env:TEMP "install.ps1"
+          Invoke-WebRequest -Uri "https://github.com/Lensi-zhang/Akey-CLI/releases/download/${{ github.ref_name }}/install.ps1" -OutFile $scriptPath -UseBasicParsing
+          powershell -NoProfile -File $scriptPath -Version "${{ github.ref_name }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & "$env:LOCALAPPDATA\Programs\Akey\bin\akey.exe" --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          powershell -NoProfile -File $scriptPath -Uninstall
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (Test-Path "$env:LOCALAPPDATA\Programs\Akey\bin\akey.exe") { throw "Uninstall left the binary behind." }
       - name: Install and verify on macOS and Linux
         if: runner.os != 'Windows'
         run: |
-          curl -fsSL "https://github.com/Lensi-zhang/Akey-CLI/releases/download/${{ github.ref_name }}/install.sh" | sh -s -- "${{ github.ref_name }}"
+          script="$(mktemp)"
+          curl -fsSL "https://github.com/Lensi-zhang/Akey-CLI/releases/download/${{ github.ref_name }}/install.sh" -o "$script"
+          sh "$script" "${{ github.ref_name }}"
           "$HOME/.local/bin/akey" --version
+          sh "$script" --uninstall
+          if [ -e "$HOME/.local/bin/akey" ]; then echo "Uninstall left the binary behind."; exit 1; fi

@@ -6,10 +6,76 @@ fail() {
     exit 1
 }
 
-if [ "$#" -gt 1 ]; then
-    fail "Usage: install.sh [version]"
+usage="Usage: install.sh [--uninstall] [--purge] [version]"
+uninstall=
+purge=
+version=latest
+version_set=
+
+for argument in "$@"; do
+    case "$argument" in
+        --uninstall) uninstall=1 ;;
+        --purge) purge=1 ;;
+        --help|-h)
+            printf '%s\n' "$usage"
+            exit 0
+            ;;
+        -*)
+            fail "Unknown option: $argument. $usage"
+            ;;
+        *)
+            [ -z "$version_set" ] || fail "Unexpected argument: $argument. $usage"
+            version=$argument
+            version_set=1
+            ;;
+    esac
+done
+
+if [ -n "$purge" ] && [ -z "$uninstall" ]; then
+    fail "--purge must be used together with --uninstall."
 fi
-version=${1:-latest}
+
+[ -n "${HOME:-}" ] || fail "HOME is not set."
+install_dir="$HOME/.local/bin"
+
+if [ -n "$uninstall" ]; then
+    if [ -n "$purge" ]; then
+        akey_binary=
+        if [ -x "$install_dir/akey" ]; then
+            akey_binary="$install_dir/akey"
+        elif command -v akey >/dev/null 2>&1; then
+            akey_binary=$(command -v akey)
+        fi
+
+        if [ -n "$akey_binary" ]; then
+            profiles=$("$akey_binary" profile list --output json 2>/dev/null || true)
+            for profile_name in $(printf '%s\n' "$profiles" | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([a-z0-9][a-z0-9_-]*\)".*/\1/p'); do
+                "$akey_binary" profile delete "$profile_name" --yes >/dev/null 2>&1 ||
+                    printf 'Warning: could not delete profile %s.\n' "$profile_name" >&2
+            done
+        else
+            printf 'Warning: akey binary not found; API keys in the system keyring were not removed.\n' >&2
+        fi
+
+        if [ -d "$HOME/.akey" ]; then
+            rm -rf "$HOME/.akey"
+            printf 'Removed profile data at %s\n' "$HOME/.akey"
+        fi
+    fi
+
+    if [ -f "$install_dir/akey" ]; then
+        rm -f "$install_dir/akey"
+        printf 'Removed %s\n' "$install_dir/akey"
+    else
+        printf 'akey is not installed at %s\n' "$install_dir/akey"
+    fi
+
+    if [ -z "$purge" ]; then
+        printf 'Profile data and API keys were kept. Re-run with --purge to remove them.\n'
+    fi
+    exit 0
+fi
+
 if [ "$version" != "latest" ]; then
     case "$version" in
         v*) ;;
@@ -98,8 +164,6 @@ mkdir "$tmp_dir/extract"
 tar -xzf "$archive_path" -C "$tmp_dir/extract"
 [ -f "$tmp_dir/extract/akey" ] || fail "The archive does not contain akey."
 
-[ -n "${HOME:-}" ] || fail "HOME is not set."
-install_dir="$HOME/.local/bin"
 mkdir -p "$install_dir"
 stage_path=$(mktemp "$install_dir/.akey.XXXXXX") || fail "Could not create a staging file."
 cp "$tmp_dir/extract/akey" "$stage_path"

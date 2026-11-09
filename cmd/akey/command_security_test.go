@@ -77,6 +77,7 @@ func newTestApplication(t *testing.T) (*application, *fakeSecretStore, string) {
 		config:  config.NewStore(path),
 		secrets: secrets,
 		agents:  agent.NewRegistry(),
+		openURL: func(string) error { return nil },
 	}
 	application.refreshPrinter()
 	return application, secrets, path

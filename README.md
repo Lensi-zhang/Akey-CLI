@@ -8,7 +8,7 @@ Akey-CLI（命令名 `akey`）是一个安全的 API Key 与本地 AI Agent 管�
 
 - **无需 Go 环境**：Windows、macOS、Linux 均可使用一条命令安装。
 - **服务商预设**：自动填写 Base URL，普通 API Key、Agent Plan 和 Coding Plan 分开管理。
-- **一次向导完成**：选择服务商、填写 Model、隐藏输入 Key；Profile 和默认环境自动处理。
+- **一次向导完成**：选择服务商后打开官方控制台，填写 Model、隐藏输入 Key；Profile 和默认环境自动处理。
 - **系统密钥环**：Windows 使用 WinCred，macOS 使用 Keychain，Linux 使用 Secret Service。
 - **密钥零明文落盘**：不提供文件后端，不在密钥环不可用时降级保存明文。
 - **纯净环境注入**：`akey run` 不经过 Shell，不修改父进程或当前终端环境。
@@ -75,9 +75,11 @@ akey
 
 按提示完成三步：
 
-1. 选择服务商和 Key 类型。
-2. 从服务商控制台复制并填写 Model 或 Endpoint ID。
-3. 隐藏输入 API Key 或 Plan Key。
+1. 选择服务商和 Key 类型，向导会尝试打开对应的官方控制台。
+2. 从控制台复制并填写 Model 或 Endpoint ID。
+3. 回到终端，隐藏输入 API Key 或 Plan Key。
+
+这里只会打开官方网页，不会读取浏览器登录状态或自动获取 Key，也不是 OAuth 授权。浏览器打开失败时，可按终端显示的 URL 手动访问；Custom 没有预设控制台地址，需要手动打开所用服务的控制台。
 
 向导会自动创建 Profile、将 Key 保存到系统密钥环并设为当前默认环境。检测到 Trae 或 Claude Code 时，会在确认后初始化基础配置；该操作只准备 `mcpServers`，不会绑定模型或写入 Key。Codex 无需独立全局配置。
 

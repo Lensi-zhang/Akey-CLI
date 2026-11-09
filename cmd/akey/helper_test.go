@@ -124,7 +124,7 @@ func runHelperJSON(t *testing.T, application *application, input string, explici
 	if !strings.Contains(stderr, "请选择服务商与 Key 类型") {
 		t.Fatalf("stderr 缺少服务商提示: %s", stderr)
 	}
-	for _, prompt := range []string{"请选择服务商", "Model 或 Endpoint", "确认修改", "检测到多个 Agent"} {
+	for _, prompt := range []string{"请选择服务商", "正在打开官方控制台", "Custom 无预设控制台", "Model 或 Endpoint", "确认修改", "检测到多个 Agent"} {
 		if strings.Contains(stdout, prompt) {
 			t.Fatalf("交互提示写入 stdout: %q\n%s", prompt, stdout)
 		}
@@ -204,23 +204,33 @@ func TestHelperProviderBranches(t *testing.T) {
 		profileName  string
 		provider     string
 		baseURL      string
+		consoleURL   string
 		credential   config.CredentialType
 		nameConflict bool
 	}{
-		{name: "普通", choice: "1", profileName: "volcengine", provider: "volcengine", baseURL: "https://ark.cn-beijing.volces.com/api/v3", credential: config.CredentialAPI},
-		{name: "Agent Plan", choice: "2", profileName: "volcengine-agent-plan", provider: "volcengine", baseURL: "https://ark.cn-beijing.volces.com/api/plan/v3", credential: config.CredentialAgentPlan},
-		{name: "Coding Plan", choice: "3", profileName: "volcengine-coding-plan", provider: "volcengine", baseURL: "https://ark.cn-beijing.volces.com/api/coding/v3", credential: config.CredentialCodingPlan},
+		{name: "普通", choice: "1", profileName: "volcengine", provider: "volcengine", baseURL: "https://ark.cn-beijing.volces.com/api/v3", consoleURL: "https://ark.volcengine.com/region:cn-beijing/apiKey", credential: config.CredentialAPI},
+		{name: "Agent Plan", choice: "2", profileName: "volcengine-agent-plan", provider: "volcengine", baseURL: "https://ark.cn-beijing.volces.com/api/plan/v3", consoleURL: "https://ark.volcengine.com/region:cn-beijing/openManagement?LLM=%7B%7D&OpenModelVisible=false&advancedActiveKey=agentPlan", credential: config.CredentialAgentPlan},
+		{name: "Coding Plan", choice: "3", profileName: "volcengine-coding-plan", provider: "volcengine", baseURL: "https://ark.cn-beijing.volces.com/api/coding/v3", consoleURL: "https://ark.volcengine.com/region:cn-beijing/openManagement?LLM=%7B%7D&advancedActiveKey=subscribe", credential: config.CredentialCodingPlan},
+		{name: "OpenAI", choice: "4", profileName: "openai", provider: "openai", baseURL: "https://api.openai.com/v1", consoleURL: "https://platform.openai.com/api-keys", credential: config.CredentialAPI},
+		{name: "DeepSeek", choice: "5", profileName: "deepseek", provider: "deepseek", baseURL: "https://api.deepseek.com", consoleURL: "https://platform.deepseek.com/api_keys", credential: config.CredentialAPI},
+		{name: "Moonshot", choice: "6", profileName: "moonshot", provider: "moonshot", baseURL: "https://api.moonshot.cn/v1", consoleURL: "https://platform.moonshot.cn/console/api-keys", credential: config.CredentialAPI},
+		{name: "OpenRouter", choice: "7", profileName: "openrouter", provider: "openrouter", baseURL: "https://openrouter.ai/api/v1", consoleURL: "https://openrouter.ai/settings/keys", credential: config.CredentialAPI},
 		{name: "Custom", choice: "8", extraInput: "https://custom.example.com/v1\n", profileName: "custom", provider: "custom", baseURL: "https://custom.example.com/v1", credential: config.CredentialAPI},
-		{name: "名称冲突", choice: "", profileName: "volcengine-2", provider: "volcengine", baseURL: "https://ark.cn-beijing.volces.com/api/v3", credential: config.CredentialAPI, nameConflict: true},
+		{name: "名称冲突", choice: "", profileName: "volcengine-2", provider: "volcengine", baseURL: "https://ark.cn-beijing.volces.com/api/v3", consoleURL: "https://ark.volcengine.com/region:cn-beijing/apiKey", credential: config.CredentialAPI, nameConflict: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			application, secrets, _ := newTestApplication(t)
+			var openedURLs []string
+			application.openURL = func(url string) error {
+				openedURLs = append(openedURLs, url)
+				return nil
+			}
 			if test.nameConflict {
 				createTestProfile(t, application, "volcengine")
 			}
 			input := test.choice + "\n" + test.extraInput + "model\n" + testSecret + "\n"
-			view, _, _ := runHelperJSON(t, application, input, true)
+			view, _, stderr := runHelperJSON(t, application, input, true)
 			if view.Profile != test.profileName || view.CredentialType != test.credential || !view.Current || view.AgentStatus != "not_detected" {
 				t.Fatalf("helper 结果不符合预期: %+v", view)
 			}
@@ -234,7 +244,45 @@ func TestHelperProviderBranches(t *testing.T) {
 			if secrets.secrets[profile.ID] != testSecret {
 				t.Fatal("Key 未按 Profile.ID 保存")
 			}
+			if test.consoleURL == "" {
+				if len(openedURLs) != 0 {
+					t.Fatalf("Custom 不应打开浏览器，实际打开: %v", openedURLs)
+				}
+				if !strings.Contains(stderr, "Custom 无预设控制台") {
+					t.Fatalf("Custom 缺少手动操作提示: %s", stderr)
+				}
+			} else {
+				if len(openedURLs) != 1 || openedURLs[0] != test.consoleURL {
+					t.Fatalf("打开的控制台地址 = %v，期望 %q", openedURLs, test.consoleURL)
+				}
+				if !strings.Contains(stderr, test.consoleURL) {
+					t.Fatalf("stderr 缺少手动访问地址: %s", stderr)
+				}
+			}
 		})
+	}
+}
+
+func TestHelperConsoleOpenFailureContinues(t *testing.T) {
+	application, _, _ := newTestApplication(t)
+	const consoleURL = "https://ark.volcengine.com/region:cn-beijing/apiKey"
+	application.openURL = func(url string) error {
+		if url != consoleURL {
+			t.Fatalf("打开地址 = %q，期望 %q", url, consoleURL)
+		}
+		return errors.New("browser unavailable")
+	}
+	view, stdout, stderr := runHelperJSON(t, application, "\nmodel\n"+testSecret+"\n", true)
+	if view.Profile != "volcengine" || !view.Current {
+		t.Fatalf("浏览器打开失败不应中断向导: %+v", view)
+	}
+	for _, expected := range []string{consoleURL, "无法自动打开浏览器", "browser unavailable"} {
+		if !strings.Contains(stderr, expected) {
+			t.Fatalf("stderr 缺少 %q: %s", expected, stderr)
+		}
+	}
+	if strings.Contains(stdout, "无法自动打开浏览器") {
+		t.Fatalf("浏览器错误提示写入 stdout: %s", stdout)
 	}
 }
 

@@ -47,6 +47,14 @@ func runHelper(application *application) error {
 	if err != nil {
 		return err
 	}
+	if preset.ConsoleURL == "" {
+		_, _ = fmt.Fprintln(application.stderr, "Custom 无预设控制台，请手动打开你的服务商控制台。")
+	} else {
+		_, _ = fmt.Fprintf(application.stderr, "正在打开官方控制台：%s\n", preset.ConsoleURL)
+		if err := application.openURL(preset.ConsoleURL); err != nil {
+			_, _ = fmt.Fprintf(application.stderr, "无法自动打开浏览器，请手动访问上述地址：%v\n", err)
+		}
+	}
 	baseURL := preset.BaseURL
 	if preset.ID == "custom" {
 		baseURL, err = promptLine(application.stdin, application.stderr, "Base URL: ")

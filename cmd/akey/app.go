@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"io"
+	"os/exec"
+	"runtime"
 	"sync"
 
 	"github.com/Lensi-zhang/Akey-CLI/internal/agent"
@@ -22,6 +24,7 @@ type application struct {
 	secretsErr  error
 	secretsOnce sync.Once
 	agents      *agent.Registry
+	openURL     func(string) error
 
 	profileName    string
 	output         string
@@ -33,14 +36,28 @@ type application struct {
 
 func newApplication(stdin io.Reader, stdout, stderr io.Writer) (*application, error) {
 	application := &application{
-		stdin:  stdin,
-		stdout: stdout,
-		stderr: stderr,
-		config: config.NewStore(),
-		agents: agent.NewDefaultRegistry(),
+		stdin:   stdin,
+		stdout:  stdout,
+		stderr:  stderr,
+		config:  config.NewStore(),
+		agents:  agent.NewDefaultRegistry(),
+		openURL: openBrowser,
 	}
 	application.refreshPrinter()
 	return application, nil
+}
+
+func openBrowser(url string) error {
+	var command *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		command = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	case "darwin":
+		command = exec.Command("open", url)
+	default:
+		command = exec.Command("xdg-open", url)
+	}
+	return command.Start()
 }
 
 // secretStore 延迟打开系统密钥环，使不依赖凭证的命令仍可独立使用。

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net/url"
 	"testing"
 
 	"github.com/Lensi-zhang/Akey-CLI/internal/validate"
@@ -28,10 +29,17 @@ func TestProviderPresetsSeparateCredentialTypes(t *testing.T) {
 			if preset.BaseURL != "" {
 				t.Fatalf("custom preset must not provide a base URL: %q", preset.BaseURL)
 			}
+			if preset.ConsoleURL != "" {
+				t.Fatalf("custom preset must not provide a console URL: %q", preset.ConsoleURL)
+			}
 			continue
 		}
 		if err := validate.BaseURL(preset.BaseURL); err != nil {
 			t.Fatalf("invalid base URL for %q: %v", preset.ID, err)
+		}
+		consoleURL, err := url.Parse(preset.ConsoleURL)
+		if err != nil || consoleURL.Scheme != "https" || consoleURL.Host == "" {
+			t.Fatalf("invalid HTTPS console URL for %q: %q, err = %v", preset.ID, preset.ConsoleURL, err)
 		}
 	}
 
